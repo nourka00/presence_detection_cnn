@@ -1,5 +1,23 @@
-
 #!/usr/bin/env python3
+"""
+CNN-BiLSTM variant of data_learning.py
+
+This file is identical to the baseline data_learning.py EXCEPT for the two
+branch functions (cnn_model_abs, cnn_model_phase), where the final
+Flatten() -> Dense(32) step is replaced with:
+
+    Reshape (keep the frequency axis as a sequence)
+        -> Bidirectional(LSTM(...))
+        -> Dense(32)
+
+Everything else (data generator, training loop, testing / reporting logic,
+save/load) is untouched, so results are directly comparable to the
+baseline CNN under the same Day 9-14 / Day 15-16 / Day 24 split.
+
+IMPORTANT: this script saves to a DIFFERENT model file than the baseline
+(conf.model_name with a "_bilstm" suffix), so it will never overwrite your
+existing wifi_presence_model.h5.
+"""
 
 import random
 import argparse
@@ -9,8 +27,9 @@ import os
 import numpy as np
 import tensorflow as tf
 
-# random_seed = 1337 first run
-random_seed = 2000 
+#random_seed = 1337 first run
+random_seed = 2000
+
 
 random.seed(random_seed)
 np.random.seed(random_seed)
@@ -28,6 +47,9 @@ from keras.layers import (
     Input,
     concatenate,
     Flatten,
+    Reshape,
+    Bidirectional,
+    LSTM,
     BatchNormalization,
     AveragePooling2D,
     Conv2D
@@ -59,7 +81,7 @@ def get_input_arguments():
 
 
 # ============================================================
-# CLASSIFICATION REPORT
+# CLASSIFICATION REPORT (unchanged from baseline)
 # ============================================================
 
 def get_classification_report(
@@ -132,7 +154,7 @@ def get_classification_report(
 
 
 # ============================================================
-# FAST DATA GENERATOR
+# FAST DATA GENERATOR (unchanged from baseline)
 # ============================================================
 
 class DatSequence(Sequence):
@@ -163,10 +185,6 @@ class DatSequence(Sequence):
             np.prod(self.input_shape)
         )
 
-        # ----------------------------------------------------
-        # Find number of samples
-        # ----------------------------------------------------
-
         x_bytes = os.path.getsize(
             self.x_filename
         )
@@ -185,10 +203,6 @@ class DatSequence(Sequence):
         self.num_samples = (
             x_bytes // bytes_per_sample
         )
-
-        # ----------------------------------------------------
-        # Memory map
-        # ----------------------------------------------------
 
         self.x_data = np.memmap(
             self.x_filename,
@@ -258,10 +272,6 @@ class DatSequence(Sequence):
             start:end
         ]
 
-        # ----------------------------------------------------
-        # Read only one batch
-        # ----------------------------------------------------
-
         x_batch = self.x_data[
             batch_indices
         ]
@@ -270,7 +280,6 @@ class DatSequence(Sequence):
             batch_indices
         ]
 
-        # Make writable/contiguous arrays for TensorFlow
         x_batch = np.asarray(
             x_batch,
             dtype=np.float32,
@@ -297,7 +306,7 @@ class DatSequence(Sequence):
 
 
 # ============================================================
-# NEURAL NETWORK
+# NEURAL NETWORK  (CNN-BiLSTM)
 # ============================================================
 
 class NeuralNetworkModel:
@@ -307,7 +316,8 @@ class NeuralNetworkModel:
         input_data_shape,
         abs_data_shape,
         phase_data_shape,
-        num_classes
+        num_classes,
+        lstm_units=32
     ):
 
         self.model = None
@@ -318,11 +328,13 @@ class NeuralNetworkModel:
         self.abs_data_shape = abs_data_shape
         self.phase_data_shape = phase_data_shape
 
+        self.lstm_units = lstm_units
+
         self.x_test = None
         self.y_test = None
 
     # ========================================================
-    # PHASE CNN
+    # PHASE CNN + BiLSTM
     # ========================================================
 
     def cnn_model_phase(self, x):
@@ -360,11 +372,29 @@ class NeuralNetworkModel:
         )(x)
 
         print(
-            "before flatten, shape of the phase data is: "
+            "before reshape, shape of the phase data is: "
             + str(x.shape)
         )
 
-        x = Flatten()(x)
+        # ----------------------------------------------------
+        # Replace Flatten() with a Reshape that keeps the
+        # frequency axis (axis 1) as a sequence dimension,
+        # merging the remaining subcarrier/channel axes into
+        # a single per-step feature vector.
+        # ----------------------------------------------------
+
+        t_steps = x.shape[1]
+        feat_dim = x.shape[2] * x.shape[3]
+
+        x = Reshape((t_steps, feat_dim))(x)
+
+        x = Bidirectional(
+            LSTM(
+                self.lstm_units,
+                return_sequences=False,
+                kernel_initializer=initializers.glorot_uniform()
+            )
+        )(x)
 
         x = Dropout(0.5)(x)
 
@@ -380,7 +410,7 @@ class NeuralNetworkModel:
         return x
 
     # ========================================================
-    # ABS CNN
+    # ABS CNN + BiLSTM
     # ========================================================
 
     def cnn_model_abs(self, x):
@@ -418,11 +448,22 @@ class NeuralNetworkModel:
         )(x)
 
         print(
-            "before flatten, shape of the abs data is: "
+            "before reshape, shape of the abs data is: "
             + str(x.shape)
         )
 
-        x = Flatten()(x)
+        t_steps = x.shape[1]
+        feat_dim = x.shape[2] * x.shape[3]
+
+        x = Reshape((t_steps, feat_dim))(x)
+
+        x = Bidirectional(
+            LSTM(
+                self.lstm_units,
+                return_sequences=False,
+                kernel_initializer=initializers.glorot_uniform()
+            )
+        )(x)
 
         x = Dropout(0.5)(x)
 
@@ -438,7 +479,7 @@ class NeuralNetworkModel:
         return x
 
     # ========================================================
-    # COMBINED CNN
+    # COMBINED CNN-BiLSTM  (identical wiring to baseline)
     # ========================================================
 
     def cnn_model_abs_phase(self):
@@ -502,7 +543,7 @@ class NeuralNetworkModel:
         )
 
     # ========================================================
-    # TRAINING
+    # TRAINING (unchanged from baseline)
     # ========================================================
 
     def fit_data(
@@ -516,7 +557,6 @@ class NeuralNetworkModel:
 
         train_counts = {}
 
-        # Fast label counting
         unique, counts = np.unique(
             train_generator.y_data,
             return_counts=True
@@ -542,10 +582,6 @@ class NeuralNetworkModel:
             validation_counts[int(label)] = int(count)
 
         print(validation_counts)
-
-        # ----------------------------------------------------
-        # Optimizer
-        # ----------------------------------------------------
 
         optimizer = Adam(
             learning_rate=0.001,
@@ -583,7 +619,7 @@ class NeuralNetworkModel:
         )
 
     # ========================================================
-    # SAVE MODEL
+    # SAVE / LOAD MODEL
     # ========================================================
 
     def save_model(self, model_name):
@@ -596,10 +632,6 @@ class NeuralNetworkModel:
             "\nTrained model was saved as {} successfully\n"
             .format(model_name)
         )
-
-    # ========================================================
-    # LOAD MODEL
-    # ========================================================
 
     def load_model(self, model_name):
 
@@ -614,7 +646,7 @@ class NeuralNetworkModel:
         )
 
     # ========================================================
-    # PREDICTION
+    # PREDICTION (unchanged from baseline)
     # ========================================================
 
     def predict(
@@ -647,10 +679,6 @@ class NeuralNetworkModel:
 
         return p
 
-    # ========================================================
-    # NORMAL TEST RESULT
-    # ========================================================
-
     def get_test_result(
         self,
         label_mapping
@@ -672,7 +700,8 @@ class NeuralNetworkModel:
         return p
 
     # ========================================================
-    # DAY 24 APARTMENT TEST
+    # DAY 24 APARTMENT TEST (unchanged from baseline, so
+    # results are directly comparable to Table 5.1-5.3)
     # ========================================================
 
     def get_apartment_test_result(self):
@@ -682,7 +711,7 @@ class NeuralNetworkModel:
         )
 
         print(
-            "APARTMENT TEST RESULTS - DAY 24"
+            "APARTMENT TEST RESULTS - DAY 24 (CNN-BiLSTM)"
         )
 
         print(
@@ -873,10 +902,6 @@ class NeuralNetworkModel:
 
         return predictions
 
-    # ========================================================
-    # NO LABEL
-    # ========================================================
-
     def get_no_label_result(
         self,
         dd,
@@ -889,10 +914,6 @@ class NeuralNetworkModel:
             output_label,
             batch_size=batch_size
         )
-
-    # ========================================================
-    # SAVE RESULT
-    # ========================================================
 
     def save_result(
         self,
@@ -910,10 +931,6 @@ class NeuralNetworkModel:
             + "\n"
         )
 
-    # ========================================================
-    # END
-    # ========================================================
-
     def end(self):
 
         K.clear_session()
@@ -922,7 +939,7 @@ class NeuralNetworkModel:
 
 
 # ============================================================
-# MAIN
+# MAIN (unchanged from baseline, except the model filename)
 # ============================================================
 
 def main():
@@ -949,16 +966,21 @@ def main():
 
         data_folder += "test/"
 
+    # ------------------------------------------------------
+    # IMPORTANT: distinct model filename so the baseline
+    # wifi_presence_model.h5 is never overwritten.
+    # ------------------------------------------------------
+
+    base_name, ext = os.path.splitext(conf.model_name)
+    bilstm_model_name = base_name + "_bilstm" + ext
+
     nn_model = NeuralNetworkModel(
         conf.data_shape_to_nn,
         conf.abs_shape_to_nn,
         conf.phase_shape_to_nn,
-        conf.total_classes
+        conf.total_classes,
+        lstm_units=32
     )
-
-    # ========================================================
-    # TRAINING MODE
-    # ========================================================
 
     if training_mode:
 
@@ -980,8 +1002,6 @@ def main():
             "===================================="
         )
 
-        # IMPORTANT:
-        # Keep 256. Do NOT use 200.
         train_generator = DatSequence(
             train_x,
             train_y,
@@ -1017,7 +1037,7 @@ def main():
         )
 
         print(
-            "STARTING CNN TRAINING"
+            "STARTING CNN-BiLSTM TRAINING"
         )
 
         print(
@@ -1033,15 +1053,11 @@ def main():
         )
 
         nn_model.save_model(
-            conf.model_name
+            bilstm_model_name
         )
 
         del train_generator
         del validation_generator
-
-    # ========================================================
-    # TEST MODE
-    # ========================================================
 
     else:
 
@@ -1148,7 +1164,7 @@ def main():
         nn_model.y_test = y_test
 
         nn_model.load_model(
-            conf.model_name
+            bilstm_model_name
         )
 
         if (
@@ -1173,7 +1189,7 @@ def main():
 
         nn_model.save_result(
             result,
-            data_folder + "result.dat"
+            data_folder + "result_bilstm.dat"
         )
 
         del x_test

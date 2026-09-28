@@ -3,7 +3,7 @@ import json
 from test_date_conf import parse_test_days
 
 # folder directory where all the data is stored (absolute path)
-log_folder = '/root/share/upload_wifi_data/'
+log_folder = '../upload_wifi_data/'
 # folder directory used to store processed data (path relative to repo directory)
 data_folder = 'data/'
 # folder directory used to store model (path relative to repo directory
@@ -46,7 +46,7 @@ train_label = {'empty': 0, 'motion':1} # key: types of runs; value: class (0 or 
 total_classes = 2
 draw_date = ['day5', ]
 draw_label = 'mixed'
-training_date = ['day9','day10', 'day11', 'day12', 'day13', 'day14']
+training_date = ['day9', 'day10', 'day11', 'day12', 'day13', 'day14']
 training_validate_date = ['day15', 'day16']
 # make sure validation data and training data come from disjoint days
 for d in training_validate_date:

@@ -82,8 +82,8 @@ def main():
     else:
         print("Get test result using existing model (in test mode)\n")
         nn_model.load_model(conf.model_name)
-        result = nn_model.get_test_result(label)
-        # nn_model.save_result(result, conf.file_prefix+conf.test_result_filename)
+        result = nn_model.get_apartment_test_result()
+         # nn_model.save_result(result, conf.file_prefix+conf.test_result_filename)
     nn_model.end()
     print("Done!")
 

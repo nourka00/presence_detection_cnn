@@ -1,7 +1,14 @@
-__pycache__/*
-.idea/*
-*.dat
+# Python cache
+__pycache__/
 *.pyc
-*.h5
-data/*
-model/*
+
+# IDE
+.idea/
+.vscode/
+
+# Large/generated CSI data
+*.dat
+data/
+
+# Trained models
+# .h5 files are intentionally tracked
